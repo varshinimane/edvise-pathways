@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import NotificationSystem from './NotificationSystem';
 
 const Navigation = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -74,6 +75,9 @@ const Navigation = () => {
 
           {/* Right side actions */}
           <div className="flex items-center space-x-3">
+            {/* Notifications */}
+            {user && <NotificationSystem />}
+            
             {/* User Menu */}
             <div className="relative">
               <Button 

@@ -1,9 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Card } from '@/components/ui/card';
-import { MapPin, ExternalLink, Phone, Mail } from 'lucide-react';
+import { MapPin, ExternalLink, Phone, Mail, Filter } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 
 // Fix for default markers
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -69,11 +72,105 @@ const sampleColleges: College[] = [
 interface CollegeMapProps {
   selectedCollege?: College | null;
   onCollegeSelect?: (college: College) => void;
+  recommendationFilters?: string[];
 }
 
-const CollegeMap = ({ selectedCollege, onCollegeSelect }: CollegeMapProps) => {
+const CollegeMap = ({ selectedCollege, onCollegeSelect, recommendationFilters = [] }: CollegeMapProps) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
+  const [colleges, setColleges] = useState<College[]>(sampleColleges);
+  const [filteredColleges, setFilteredColleges] = useState<College[]>(sampleColleges);
+  const [filterType, setFilterType] = useState<string>('all');
+  const [userRecommendations, setUserRecommendations] = useState<any>(null);
+  const { user } = useAuth();
+
+  // Fetch user recommendations and colleges from database
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Fetch colleges from database
+        const { data: dbColleges } = await supabase
+          .from('colleges')
+          .select('*')
+          .limit(50);
+
+        // If we have database colleges, use them; otherwise fall back to sample data
+        if (dbColleges && dbColleges.length > 0) {
+          const formattedColleges = dbColleges.map(college => ({
+            id: college.id,
+            name: college.name,
+            address: `${college.city}, ${college.state}`,
+            lat: college.latitude ? parseFloat(college.latitude.toString()) : 28.6139,
+            lng: college.longitude ? parseFloat(college.longitude.toString()) : 77.2090,
+            type: college.college_type || 'University',
+            rating: 4.0, // Default rating since not in DB
+            programs: college.courses_offered || [],
+            phone: college.phone,
+            email: college.email,
+            website: college.website_url
+          }));
+          setColleges(formattedColleges);
+        }
+
+        // Fetch user recommendations if logged in
+        if (user) {
+          const { data: recommendations } = await supabase
+            .from('recommendations')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('generated_at', { ascending: false })
+            .limit(1)
+            .single();
+
+          setUserRecommendations(recommendations);
+        }
+      } catch (error) {
+        console.error('Error fetching data:', error);
+        // Use sample data as fallback
+        setColleges(sampleColleges);
+      }
+    };
+
+    fetchData();
+  }, [user]);
+
+  // Filter colleges based on user selection and recommendations
+  useEffect(() => {
+    let filtered = colleges;
+
+    if (filterType === 'recommended' && userRecommendations?.career_recommendations) {
+      // Filter colleges based on career recommendations
+      const careerFields = userRecommendations.career_recommendations.map((rec: any) => {
+        const title = rec.title.toLowerCase();
+        if (title.includes('engineer')) return 'engineering';
+        if (title.includes('doctor') || title.includes('medical')) return 'medical';
+        if (title.includes('business') || title.includes('management')) return 'business';
+        if (title.includes('teacher') || title.includes('education')) return 'education';
+        if (title.includes('design') || title.includes('art')) return 'arts';
+        return 'general';
+      });
+
+      filtered = colleges.filter(college => {
+        const collegeType = college.type.toLowerCase();
+        const programs = college.programs.map(p => p.toLowerCase()).join(' ');
+        
+        return careerFields.some(field => 
+          collegeType.includes(field) || 
+          programs.includes(field) ||
+          college.programs.some(program => {
+            const prog = program.toLowerCase();
+            return careerFields.some(cf => prog.includes(cf));
+          })
+        );
+      });
+    } else if (filterType !== 'all') {
+      filtered = colleges.filter(college => 
+        college.type.toLowerCase().includes(filterType.toLowerCase())
+      );
+    }
+
+    setFilteredColleges(filtered);
+  }, [colleges, filterType, userRecommendations]);
 
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) return;
@@ -86,16 +183,42 @@ const CollegeMap = ({ selectedCollege, onCollegeSelect }: CollegeMapProps) => {
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
-    // Add college markers
-    sampleColleges.forEach((college) => {
+    mapInstance.current = map;
+
+    return () => {
+      if (mapInstance.current) {
+        mapInstance.current.remove();
+        mapInstance.current = null;
+      }
+    };
+  }, []);
+
+  // Update markers when filtered colleges change
+  useEffect(() => {
+    if (!mapInstance.current) return;
+
+    // Clear existing markers
+    mapInstance.current.eachLayer((layer) => {
+      if (layer instanceof L.Marker) {
+        mapInstance.current?.removeLayer(layer);
+      }
+    });
+
+    // Add filtered college markers
+    filteredColleges.forEach((college) => {
+      const isRecommended = filterType === 'recommended';
+      const markerColor = isRecommended ? 'green' : 'blue';
+      
       const marker = L.marker([college.lat, college.lng])
-        .addTo(map)
+        .addTo(mapInstance.current!)
         .bindPopup(`
           <div class="p-2 min-w-[200px]">
             <h3 class="font-semibold text-sm mb-1">${college.name}</h3>
             <p class="text-xs text-gray-600 mb-2">${college.address}</p>
             <div class="flex items-center justify-between">
-              <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">${college.type}</span>
+              <span class="text-xs bg-${markerColor}-100 text-${markerColor}-800 px-2 py-1 rounded">
+                ${college.type}${isRecommended ? ' (Recommended)' : ''}
+              </span>
               <span class="text-xs font-medium">★ ${college.rating}</span>
             </div>
           </div>
@@ -105,25 +228,38 @@ const CollegeMap = ({ selectedCollege, onCollegeSelect }: CollegeMapProps) => {
         onCollegeSelect?.(college);
       });
     });
-
-    mapInstance.current = map;
-
-    return () => {
-      if (mapInstance.current) {
-        mapInstance.current.remove();
-        mapInstance.current = null;
-      }
-    };
-  }, [onCollegeSelect]);
+  }, [filteredColleges, filterType, onCollegeSelect]);
 
   return (
     <div className="space-y-6">
       {/* Map Container */}
       <Card className="card-gradient border-border overflow-hidden">
         <div className="p-4">
-          <div className="flex items-center space-x-2 mb-4">
-            <MapPin className="h-5 w-5 text-primary" />
-            <h2 className="text-lg font-semibold">Nearby Colleges</h2>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-2">
+              <MapPin className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold">Nearby Colleges</h2>
+            </div>
+            <div className="flex items-center space-x-2">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <Select value={filterType} onValueChange={setFilterType}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Filter colleges" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Colleges</SelectItem>
+                  <SelectItem value="recommended">Recommended</SelectItem>
+                  <SelectItem value="engineering">Engineering</SelectItem>
+                  <SelectItem value="medical">Medical</SelectItem>
+                  <SelectItem value="business">Business</SelectItem>
+                  <SelectItem value="arts">Arts</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="mb-2 text-sm text-muted-foreground">
+            Showing {filteredColleges.length} of {colleges.length} colleges
+            {filterType === 'recommended' && userRecommendations && ' (based on your career recommendations)'}
           </div>
           <div 
             ref={mapRef} 

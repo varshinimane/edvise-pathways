@@ -161,6 +161,55 @@ const Dashboard = () => {
     };
 
     fetchDashboardData();
+
+    // Set up real-time subscriptions for live updates
+    const channel = supabase
+      .channel('dashboard-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'quiz_responses',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          console.log('Quiz response updated:', payload);
+          fetchDashboardData(); // Refresh data when quiz responses change
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'recommendations',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          console.log('Recommendations updated:', payload);
+          fetchDashboardData(); // Refresh data when recommendations change
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          console.log('Profile updated:', payload);
+          fetchDashboardData(); // Refresh data when profile changes
+        }
+      )
+      .subscribe();
+
+    // Cleanup subscription on unmount
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   if (loading) {
