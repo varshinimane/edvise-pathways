@@ -185,7 +185,6 @@ export type Database = {
         Row: {
           amount: number | null
           application_deadline: string | null
-          application_url: string | null
           caste_category: string[] | null
           category: string | null
           created_at: string
@@ -205,7 +204,6 @@ export type Database = {
         Insert: {
           amount?: number | null
           application_deadline?: string | null
-          application_url?: string | null
           caste_category?: string[] | null
           category?: string | null
           created_at?: string
@@ -225,7 +223,6 @@ export type Database = {
         Update: {
           amount?: number | null
           application_deadline?: string | null
-          application_url?: string | null
           caste_category?: string[] | null
           category?: string | null
           created_at?: string
